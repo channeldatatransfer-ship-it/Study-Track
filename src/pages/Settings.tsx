@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { useStudy } from '../context/StudyContext';
-import { Save, UserCircle, Trash2, Download, Upload } from 'lucide-react';
+import { Save, UserCircle, Trash2, Download, Upload, LogOut } from 'lucide-react';
 import { motion } from 'framer-motion';
 import AnimatedPage from '../components/AnimatedPage';
 
 export default function Settings() {
+    const { user, logout } = useAuth();
     const { userProfile, updateProfile, resetData, exportData, importData } = useStudy();
     const [name, setName] = useState(userProfile.name);
     const [grade, setGrade] = useState(userProfile.grade);
@@ -108,7 +110,40 @@ export default function Settings() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 }}
-                className="bg-red-50 rounded-2xl border border-red-100 p-6 mt-8"
+                className="bg-white rounded-2xl border border-slate-100 p-6 mt-8 space-y-4"
+            >
+                <h3 className="text-slate-800 font-semibold mb-2 flex items-center gap-2">
+                    <UserCircle className="w-5 h-5" />
+                    Account
+                </h3>
+                <div className="flex items-center gap-4 mb-4">
+                    {user?.photoURL ? (
+                        <img src={user.photoURL} alt={user.displayName || 'User'} className="w-12 h-12 rounded-full" />
+                    ) : (
+                        <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xl">
+                            {user?.displayName ? user.displayName[0] : (user?.email ? user.email[0].toUpperCase() : 'U')}
+                        </div>
+                    )}
+                    <div>
+                        <p className="font-medium text-slate-900">{user?.displayName || 'User'}</p>
+                        <p className="text-sm text-slate-500">{user?.email}</p>
+                    </div>
+                </div>
+
+                <button
+                    onClick={logout}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 text-slate-700 font-medium rounded-lg hover:bg-slate-100 hover:text-slate-900 transition-colors text-sm flex items-center justify-center gap-2"
+                >
+                    <LogOut className="w-4 h-4" />
+                    Sign Out
+                </button>
+            </motion.div>
+
+            <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.25 }}
+                className="bg-red-50 rounded-2xl border border-red-100 p-6"
             >
                 <h3 className="text-red-700 font-semibold mb-2 flex items-center gap-2">
                     <Trash2 className="w-5 h-5" />
@@ -123,7 +158,7 @@ export default function Settings() {
                             resetData();
                         }
                     }}
-                    className="px-4 py-2 bg-white border border-red-200 text-red-600 font-medium rounded-lg hover:bg-red-50 hover:text-red-700 transition-colors text-sm"
+                    className="w-full px-4 py-2 bg-white border border-red-200 text-red-600 font-medium rounded-lg hover:bg-red-50 hover:text-red-700 transition-colors text-sm"
                 >
                     Reset All Data
                 </button>

@@ -1,9 +1,11 @@
 import { Link, useLocation, useOutlet } from 'react-router-dom';
-import { BookOpen, Settings as SettingsIcon, LayoutDashboard, TrendingUp, List } from 'lucide-react';
+import { BookOpen, Settings as SettingsIcon, LayoutDashboard, TrendingUp, List, LogOut } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { AnimatePresence } from 'framer-motion';
 import { cloneElement } from 'react';
 
 export default function Layout() {
+    const { logout } = useAuth();
     const location = useLocation();
     const element = useOutlet();
 
@@ -80,9 +82,18 @@ export default function Layout() {
                         </Link>
                     </nav>
 
-                    <div className="mt-auto pt-6 border-t border-slate-100 text-xs text-slate-400">
-                        <p>Empowering Students</p>
-                        <p className="mt-1">© 2026 TrackEd</p>
+                    <div className="mt-auto pt-6 border-t border-slate-100">
+                        <button
+                            onClick={logout}
+                            className="flex items-center gap-3 px-4 py-3 rounded-lg text-slate-600 hover:bg-red-50 hover:text-red-700 transition-colors w-full text-left mb-4"
+                        >
+                            <LogOut className="w-5 h-5" />
+                            Sign Out
+                        </button>
+                        <div className="text-xs text-slate-400">
+                            <p>Empowering Students</p>
+                            <p className="mt-1">© 2026 TrackEd</p>
+                        </div>
                     </div>
                 </aside>
 
