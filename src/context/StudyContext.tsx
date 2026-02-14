@@ -1,4 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { useAuth } from './AuthContext';
+import { db } from '../lib/firebase';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 // --- Types ---
 export type Topic = {
@@ -61,7 +64,10 @@ const STORAGE_KEY = 'study-tracker-data';
 const StudyContext = createContext<StudyContextType | undefined>(undefined);
 
 export function StudyProvider({ children }: { children: React.ReactNode }) {
-    // Load from LocalStorage (Lazy Initialization)
+    const { user } = useAuth();
+
+    // Lazy init for Guest Mode (LocalStorage) to allow immediate rendering
+    // For Authenticated User, this will be overwritten by Firestore data
     const [userProfile, setUserProfile] = useState<UserProfile>(() => {
         try {
             const savedData = localStorage.getItem(STORAGE_KEY);
@@ -81,7 +87,7 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
             if (savedData) {
                 const parsed = JSON.parse(savedData);
                 if (parsed.subjects) {
-                    // Migration: Ensure chapters have topics array if loading from old data
+                    // Migration logic for old data format if present
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     return parsed.subjects.map((sub: any) => ({
                         ...sub,
@@ -99,182 +105,249 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
         return [];
     });
 
-    // const [isLoaded, setIsLoaded] = useState(true); // Removed as lazy init handles it
-
-    // Save to LocalStorage
+    // Effect: Load/Sync data
     useEffect(() => {
-        localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify({ userProfile, subjects })
-        );
-    }, [userProfile, subjects]);
+        if (user) {
+            console.log("Syncing with Firestore for user:", user.uid);
+            // --- Authenticated Mode: Sync with Firestore ---
+            const userDocRef = doc(db, 'users', user.uid);
 
-    // --- Actions ---
+            const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    // Data exists in cloud, sync state
+                    const data = docSnap.data();
+                    if (data.userProfile) setUserProfile(data.userProfile);
+                    if (data.subjects) setSubjects(data.subjects);
+                } else {
+                    // No data in cloud (New user or first login) -> Migrate LocalStorage
+                    console.log("No cloud data found. Attempting migration...");
+
+                    // We can use the current state values which are lazy-loaded from localStorage
+                    const dataToUpload = {
+                        userProfile: initialProfile,
+                        subjects: [] as Subject[]
+                    };
+
+                    try {
+                        const savedData = localStorage.getItem(STORAGE_KEY);
+                        if (savedData) {
+                            const parsed = JSON.parse(savedData);
+                            if (parsed.userProfile) dataToUpload.userProfile = parsed.userProfile;
+                            if (parsed.subjects) {
+                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                dataToUpload.subjects = parsed.subjects.map((sub: any) => ({
+                                    ...sub,
+                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                    chapters: sub.chapters.map((chap: any) => ({
+                                        ...chap,
+                                        topics: chap.topics || []
+                                    }))
+                                }));
+                            }
+                        }
+                    } catch (e) {
+                        console.error("Error reading local storage for migration:", e);
+                    }
+
+                    // Upload to Firestore
+                    setDoc(userDocRef, dataToUpload)
+                        .then(() => console.log("Migration successful"))
+                        .catch(err => console.error("Migration failed", err));
+                }
+            }, (error) => {
+                console.error("Firestore sync error:", error);
+            });
+
+            return () => unsubscribe();
+        } else {
+            // --- Guest Mode ---
+            // LocalStorage loading is already done via lazy initialization
+        }
+    }, [user]); // Only re-run if user changes logic
+
+    // Helper: Save to Source of Truth
+    const saveData = async (newProfile: UserProfile, newSubjects: Subject[]) => {
+        // Always update local state immediately (Optimistic UI)
+        setUserProfile(newProfile);
+        setSubjects(newSubjects);
+
+        if (user) {
+            // Save to Cloud
+            try {
+                await setDoc(doc(db, 'users', user.uid), {
+                    userProfile: newProfile,
+                    subjects: newSubjects
+                });
+            } catch (e) {
+                console.error("Failed to save to cloud:", e);
+                // Optionally show toast error
+            }
+        } else {
+            // Save to LocalStorage
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                userProfile: newProfile,
+                subjects: newSubjects
+            }));
+        }
+    };
+
+
+    // --- Actions (Updated to use saveData) ---
     const updateProfile = (profile: Partial<UserProfile>) => {
-        setUserProfile((prev) => ({ ...prev, ...profile }));
+        saveData({ ...userProfile, ...profile }, subjects);
     };
 
     const addSubject = (newSubject: Omit<Subject, 'id' | 'chapters'>) => {
         const id = crypto.randomUUID();
-        const subject: Subject = {
-            ...newSubject,
-            id,
-            chapters: [],
-        };
-        setSubjects((prev) => [...prev, subject]);
+        const subject: Subject = { ...newSubject, id, chapters: [] };
+        saveData(userProfile, [...subjects, subject]);
     };
 
     const deleteSubject = (id: string) => {
-        setSubjects((prev) => prev.filter((s) => s.id !== id));
+        saveData(userProfile, subjects.filter((s) => s.id !== id));
     };
 
     const addChapter = (subjectId: string, chapterName: string) => {
-        setSubjects((prev) =>
-            prev.map((sub) => {
-                if (sub.id === subjectId) {
-                    return {
-                        ...sub,
-                        chapters: [
-                            ...sub.chapters,
-                            {
-                                id: crypto.randomUUID(),
-                                name: chapterName,
-                                isCompleted: false,
-                                topics: [],
-                            },
-                        ],
-                    };
-                }
-                return sub;
-            })
-        );
+        const newSubjects = subjects.map((sub) => {
+            if (sub.id === subjectId) {
+                return {
+                    ...sub,
+                    chapters: [
+                        ...sub.chapters,
+                        {
+                            id: crypto.randomUUID(),
+                            name: chapterName,
+                            isCompleted: false,
+                            topics: [],
+                        },
+                    ],
+                };
+            }
+            return sub;
+        });
+        saveData(userProfile, newSubjects);
     };
 
     const toggleChapter = (subjectId: string, chapterId: string) => {
-        setSubjects((prev) =>
-            prev.map((sub) => {
-                if (sub.id === subjectId) {
-                    return {
-                        ...sub,
-                        chapters: sub.chapters.map((ch) => {
-                            if (ch.id === chapterId) {
-                                return {
-                                    ...ch,
-                                    isCompleted: !ch.isCompleted,
-                                    completedAt: !ch.isCompleted ? new Date().toISOString() : null,
-                                };
-                            }
-                            return ch;
-                        }),
-                    };
-                }
-                return sub;
-            })
-        );
+        const newSubjects = subjects.map((sub) => {
+            if (sub.id === subjectId) {
+                return {
+                    ...sub,
+                    chapters: sub.chapters.map((ch) => {
+                        if (ch.id === chapterId) {
+                            return {
+                                ...ch,
+                                isCompleted: !ch.isCompleted,
+                                completedAt: !ch.isCompleted ? new Date().toISOString() : null,
+                            };
+                        }
+                        return ch;
+                    }),
+                };
+            }
+            return sub;
+        });
+        saveData(userProfile, newSubjects);
     };
 
     const deleteChapter = (subjectId: string, chapterId: string) => {
-        setSubjects((prev) =>
-            prev.map((sub) => {
-                if (sub.id === subjectId) {
-                    return {
-                        ...sub,
-                        chapters: sub.chapters.filter((ch) => ch.id !== chapterId),
-                    };
-                }
-                return sub;
-            })
-        );
+        const newSubjects = subjects.map((sub) => {
+            if (sub.id === subjectId) {
+                return {
+                    ...sub,
+                    chapters: sub.chapters.filter((ch) => ch.id !== chapterId),
+                };
+            }
+            return sub;
+        });
+        saveData(userProfile, newSubjects);
     };
 
     // --- Topic Actions ---
-
     const addTopic = (subjectId: string, chapterId: string, topicName: string) => {
-        setSubjects((prev) =>
-            prev.map((sub) => {
-                if (sub.id === subjectId) {
-                    return {
-                        ...sub,
-                        chapters: sub.chapters.map((ch) => {
-                            if (ch.id === chapterId) {
-                                return {
-                                    ...ch,
-                                    topics: [
-                                        ...ch.topics,
-                                        {
-                                            id: crypto.randomUUID(),
-                                            name: topicName,
-                                            isCompleted: false,
-                                            completedAt: null,
-                                        }
-                                    ]
-                                };
-                            }
-                            return ch;
-                        }),
-                    };
-                }
-                return sub;
-            })
-        );
+        const newSubjects = subjects.map((sub) => {
+            if (sub.id === subjectId) {
+                return {
+                    ...sub,
+                    chapters: sub.chapters.map((ch) => {
+                        if (ch.id === chapterId) {
+                            return {
+                                ...ch,
+                                topics: [
+                                    ...ch.topics,
+                                    {
+                                        id: crypto.randomUUID(),
+                                        name: topicName,
+                                        isCompleted: false,
+                                        completedAt: null,
+                                    }
+                                ]
+                            };
+                        }
+                        return ch;
+                    }),
+                };
+            }
+            return sub;
+        });
+        saveData(userProfile, newSubjects);
     };
 
     const toggleTopic = (subjectId: string, chapterId: string, topicId: string) => {
-        setSubjects((prev) =>
-            prev.map((sub) => {
-                if (sub.id === subjectId) {
-                    return {
-                        ...sub,
-                        chapters: sub.chapters.map((ch) => {
-                            if (ch.id === chapterId) {
-                                const updatedTopics = ch.topics.map((t) =>
-                                    t.id === topicId ? {
-                                        ...t,
-                                        isCompleted: !t.isCompleted,
-                                        completedAt: !t.isCompleted ? new Date().toISOString() : null
-                                    } : t
-                                );
+        const newSubjects = subjects.map((sub) => {
+            if (sub.id === subjectId) {
+                return {
+                    ...sub,
+                    chapters: sub.chapters.map((ch) => {
+                        if (ch.id === chapterId) {
+                            const updatedTopics = ch.topics.map((t) =>
+                                t.id === topicId ? {
+                                    ...t,
+                                    isCompleted: !t.isCompleted,
+                                    completedAt: !t.isCompleted ? new Date().toISOString() : null
+                                } : t
+                            );
 
-                                // If all topics are marked done, mark the chapter as done too
-                                const allDone = updatedTopics.length > 0 && updatedTopics.every(t => t.isCompleted);
+                            // If all topics are marked done, mark the chapter as done too
+                            const allDone = updatedTopics.length > 0 && updatedTopics.every(t => t.isCompleted);
 
-                                return {
-                                    ...ch,
-                                    topics: updatedTopics,
-                                    isCompleted: allDone,
-                                    completedAt: allDone ? new Date().toISOString() : null
-                                };
-                            }
-                            return ch;
-                        }),
-                    };
-                }
-                return sub;
-            })
-        );
+                            return {
+                                ...ch,
+                                topics: updatedTopics,
+                                isCompleted: allDone,
+                                completedAt: allDone ? new Date().toISOString() : null
+                            };
+                        }
+                        return ch;
+                    }),
+                };
+            }
+            return sub;
+        });
+        saveData(userProfile, newSubjects);
     };
 
     const deleteTopic = (subjectId: string, chapterId: string, topicId: string) => {
-        setSubjects((prev) =>
-            prev.map((sub) => {
-                if (sub.id === subjectId) {
-                    return {
-                        ...sub,
-                        chapters: sub.chapters.map((ch) => {
-                            if (ch.id === chapterId) {
-                                return {
-                                    ...ch,
-                                    topics: ch.topics.filter((t) => t.id !== topicId)
-                                };
-                            }
-                            return ch;
-                        }),
-                    };
-                }
-                return sub;
-            })
-        );
+        const newSubjects = subjects.map((sub) => {
+            if (sub.id === subjectId) {
+                return {
+                    ...sub,
+                    chapters: sub.chapters.map((ch) => {
+                        if (ch.id === chapterId) {
+                            return {
+                                ...ch,
+                                topics: ch.topics.filter((t) => t.id !== topicId)
+                            };
+                        }
+                        return ch;
+                    }),
+                };
+            }
+            return sub;
+        });
+        saveData(userProfile, newSubjects);
     };
+
     const exportData = () => {
         const data = {
             userProfile,
@@ -297,8 +370,7 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
         try {
             const data = JSON.parse(jsonData);
             if (data.userProfile && Array.isArray(data.subjects)) {
-                setUserProfile(data.userProfile);
-                setSubjects(data.subjects);
+                saveData(data.userProfile, data.subjects);
                 return true;
             } else {
                 alert('Invalid backup file format.');
@@ -313,9 +385,7 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
 
     const resetData = () => {
         if (confirm('Are you sure you want to reset all data?')) {
-            setUserProfile(initialProfile);
-            setSubjects([]);
-            localStorage.removeItem(STORAGE_KEY);
+            saveData(initialProfile, []);
         }
     };
 
@@ -342,7 +412,6 @@ export function StudyProvider({ children }: { children: React.ReactNode }) {
         </StudyContext.Provider>
     );
 }
-
 // eslint-disable-next-line react-refresh/only-export-components
 export function useStudy() {
     const context = useContext(StudyContext);
