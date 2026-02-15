@@ -4,10 +4,14 @@ import App from './App.tsx'
 import './index.css'
 import { StudyProvider } from './context/StudyContext.tsx'
 
+import ErrorBoundary from './components/ErrorBoundary.tsx'
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <StudyProvider>
-      <App />
-    </StudyProvider>
+    <ErrorBoundary>
+      <StudyProvider>
+        <App />
+      </StudyProvider>
+    </ErrorBoundary>
   </React.StrictMode>,
 )
