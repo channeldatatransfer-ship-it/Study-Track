@@ -7,7 +7,7 @@ import AllChapters from './pages/AllChapters';
 import Timer from './pages/Timer';
 import Layout from './components/Layout';
 import Login from './pages/Login';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { useAuth } from './context/AuthContext';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -23,25 +23,23 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter basename="/Study-Track/">
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={
-            <ProtectedRoute>
-              <Layout />
-            </ProtectedRoute>
-          }>
-            <Route index element={<Dashboard />} />
-            <Route path="subject/:id" element={<SubjectDetails />} />
-            <Route path="analytics" element={<Analytics />} />
-            <Route path="chapters" element={<AllChapters />} />
-            <Route path="timer" element={<Timer />} />
-            <Route path="settings" element={<Settings />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+    <BrowserRouter basename="/Study-Track/">
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/" element={
+          <ProtectedRoute>
+            <Layout />
+          </ProtectedRoute>
+        }>
+          <Route index element={<Dashboard />} />
+          <Route path="subject/:id" element={<SubjectDetails />} />
+          <Route path="analytics" element={<Analytics />} />
+          <Route path="chapters" element={<AllChapters />} />
+          <Route path="timer" element={<Timer />} />
+          <Route path="settings" element={<Settings />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   );
 }
 
